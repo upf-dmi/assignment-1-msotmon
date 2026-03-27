@@ -1,7 +1,7 @@
 ---
-title: "my title"
-author: "Dummy Surname (dummy@upf.edu)"
-date: "Last update: `r format(Sys.time(), '%d %B, %Y')`"      
+title: "Hands-on I"
+author: "Marta Sotelo (marta.sotelo01@estudiant.upf.edu)"
+date: "Last update: `03/03/2026`"      
 output:
   html_document:
     toc: true
@@ -12,66 +12,569 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
 This practical focuses on data wrangling, exploratory data analysis, visualization, and critical comparison with published results using real biomedical data.
 
 We will work with the publication [**Proteomic and Metabolomic Characterization of COVID-19 Patient Sera**](https://www.sciencedirect.com/science/article/pii/S0092867420306279)
 
-# Exercise 1  
+# Exercise 1
 
 Download and load Supplementary Table 1 (“Additional Demographical and Baseline Characteristics of COVID-19 Patients and Control Groups”) from the supplementary materials of the publication.
- 
-## Exercise 1.1  
 
-Reproduce Table 1 from the manuscript using the supplementary data. Match the reported summary statistics   as closely as possible.
+### Exercise 1.1
+
+Reproduce Table 1 from the manuscript using the supplementary data. Match the reported summary statistics as closely as possible.
 
 Briefly discuss any discrepancies between your results and the published table, and provide possible explanations.
 
-```{r}
+```{r load_libraries, echo=TRUE, message=FALSE, warning=FALSE}
+### Libraries
+library(dplyr)
+library(readxl)
+library(Hmisc)
+library(table1)
+library(stringr)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+library(ggpubr)
+library(table1)
+library(grid)
+library(pheatmap)
+library(dplyr)
+library(RColorBrewer)
+```
+
+```{r chunk2, warning=FALSE, fig.align='center'}
+### Read the data
+data <- readxl::read_xlsx("data/raw_data/table.xlsx", sheet = 2)
+
+names(data) <- str_replace_all(names(data), " ", "_")
+names(data)[names(data) == "Age_(year)"] <- "Age_year"
+
+data_f <- subset(data, select = c(Sex_g, Age_year, BMI_h, Admission_date, Onset_date_f,
+                                 Date_of_progression_to_severe_state, Group_d))
 
 
+### Function to convert the dates (manage Excel numeric dates and NA)
+convert_date <- function(x) {
+  
+  if (inherits(x, "Date")) return(x)
+  if (inherits(x, "POSIXt")) return(as.Date(x))
+  
+  x <- as.character(x)
+  x[x %in% c("/", "", "NA")] <- NA
+  
+  out <- as.Date(rep(NA, length(x)))
+  is_excel <- grepl("^\\d+$", x)
+  
+  out[is_excel] <- as.Date(
+    as.numeric(x[is_excel]),
+    origin = "1899-12-30"
+  )
+  
+  return(out)
+}
+
+### Convert the dates using original column names
+data_f <- data_f %>%
+  mutate(
+    Admission_date = convert_date(Admission_date),
+    Onset_date     = convert_date(Onset_date_f),
+    Severe_date    = convert_date(Date_of_progression_to_severe_state)
+  )
+
+#State development since the admission date
+data_f$Development <- as.integer(
+  difftime(
+    data_f$Admission_date,
+    data_f$Onset_date_f,
+    units = "days"
+  )
+)
+
+data_f$Time_admission_to_severe <- as.integer(
+  difftime(
+    data_f$Severe_date,
+    data_f$Admission_date,
+    units = "days"
+  )
+)
+
+### Time variables (use absolute difference to avoid negatives)
+
+data_f <- data_f %>%
+  mutate(
+    Development = abs(Development),
+    Time_admission_to_severe = abs(Time_admission_to_severe)
+  )
+
+#Setting all the non-severe cases to NA
+data_f$Time_admission_to_severe[data_f$Group_d != 3] <- NA
+
+
+### Factor and numeric conversions
+data_f <- data_f %>%
+  mutate(
+    Sex_g = factor(Sex_g, levels = c(1, 0), labels = c("Male", "Female")),
+    Group_d = factor(Group_d,
+                     levels = c(0, 1, 2, 3),
+                     labels = c("Healthy", "Non-COVID", "Non-Severe", "Severe")),
+    Age_year = as.numeric(Age_year),
+    BMI_h = as.numeric(BMI_h)
+  )
+
+
+### Labels and units
+label(data_f$Sex_g) <- "Sex"
+label(data_f$Age_year) <- "Age"
+label(data_f$BMI_h) <- "BMI"
+label(data_f$Development) <- "Days from onset to admission"
+label(data_f$Time_admission_to_severe) <- "Admission to severe state"
+
+units(data_f$Age_year) <- "years"
+units(data_f$BMI_h) <- "kg/m²"
+units(data_f$Development) <- "days"
+units(data_f$Time_admission_to_severe) <- "days"
+
+
+### Adding a column with covid status
+
+data_f <- data_f %>%
+  mutate(
+    COVID_status = case_when(
+      Group_d %in% c("Non-Severe", "Severe") ~ "COVID",
+      Group_d %in% c("Healthy", "Non-COVID") ~ "Non-COVID",
+      TRUE ~ NA_character_
+    )
+  )
+data_f$COVID_status <-factor(data_f$COVID_status, levels = c("COVID", "Non-COVID"), labels = c("COVID-19", ""))
+
+#-------------------------------
+### Creation of Table 1
+table1(
+  ~ Sex_g + Age_year + BMI_h + Development + Time_admission_to_severe | COVID_status * Group_d ,
+  data = data_f,
+  overall = FALSE,
+  caption = "Table 1. Additional Demographical and Baseline Characteristics of COVID-19 Patients and Control Groups",
+  render.missing = function(x)"",
+)
 
 ```
 
+<b>About the data: </b>
 
-## Exercise 1.2
+-   Based on what we have seen with our analysis, it is not possible to obtain the same results observed in the table 1 published on the study. This indicates that some data manipulation has been carried out by the researchers, an alteration that is not shared on the data analysis explanation. For instance, the variable called <i>Admission to severe state (days) </i> does not match the ones published on the article. In addition, the modification done in the dates of the patients is not stated in any part of the study, making impossible to achieve the same outcomes.
+
+### Exercise 1.2
+
 Perform an exploratory data analysis (EDA) of the dataset. At a minimum, include:
 
-- Descriptive statistics for key variables  
-- Appropriate visualizations (e.g. distributions, group comparisons)  
-- A brief written summary of notable patterns, anomalies, or data quality issues  
+-   Descriptive statistics for key variables\
+-   Appropriate visualizations (e.g. distributions, group comparisons)\
+-   A brief written summary of notable patterns, anomalies, or data quality issues
+
+```{r chunk1.2, warning=FALSE, fig.align='center'}
+
+g_bmi <- data_f %>% 
+  ggplot(mapping = aes(Group_d, BMI_h, fill = Group_d))+
+  geom_violin()+
+  geom_point(alpha = 0.5)+
+  ggtitle("BMI distribution per groups")+
+  labs(
+    y = "Body mass index (BMI)",
+    x = "",
+    fill = "Condition"
+  )+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+g_bmi 
+
+ggsave("data/processed_data//BMI_Distribution.png", plot = g_bmi, width = 15, height = 12, dpi = 300)
 
 
-```{r}
+g_sex <- data_f %>%
+  ggplot(aes(x = Group_d, fill = Sex_g)) +
+  geom_bar(position = "fill") +
+  labs(
+    title = "Sex distribution per groups",
+    x = "",
+    y = "Proportion",
+    fill = "Sex"
+  ) +
+  scale_fill_manual(values = c("#F2B127", "#E0FABB")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+g_sex
+
+ggsave("data/processed_data/Sex_Distribution.png", plot = g_sex, width = 15, height = 12, dpi = 300)
+
+
+g_age <- data_f %>% 
+ ggplot(mapping = aes(x = Age_year, fill = Group_d)) +
+  geom_histogram(
+    bins = 30,
+    position = "identity",
+    alpha = 0.4,
+    color = "black",
+    linewidth = 0.3
+  ) + 
+  ggtitle("Age distribution per groups")+
+  labs(
+    y = "Counts",
+    fill = "Condition"
+  )+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+g_age
+
+ggsave("data/processed_data//Age_Distribution.png", plot = g_age, width = 15, height = 12, dpi = 300)
 
 ```
+
+<b>Summary: </b>
+
+\-<b>BMI</b>: Contrary to what might be expected, BMI does not show a significantly greater variance as COVID-19 severity increases. The Healthy and Non-Severe groups exhibit longer distribution tails toward higher values than the Severe group. Anomalies: An outlier is observed in the Healthy group exceeding 32 BMI, which is unusual for a "healthy" control group and could bias the mean of that group.
+
+\-<b>Sex</b>: As we move from "Healthy" to "Severe", the proportion of women (light green) increases and the proportion of men (orange) decreases, but it does not a pattern that affect the results.
+
+\-<b>Age</b>: The Severe group (purple) is the one that clearly dominates the 60 to 80 age range, confirming that advanced age is the most distinctive pattern of severe cases in this cohort.
 
 # Exercise 2
-## Exercise 2.1
-Reproduce Supplementary Figure 1 using the data without modifying or removing any observations. Use the same variables and groupings as in the original figure. 
-```{r}
+
+### Exercise 2.1
+
+Reproduce Supplementary Figure 1 using the data without modifying or removing any observations. Use the same variables and groupings as in the original figure.
+
+```{r, fig.align='center'}
+
+### Variable selection
+cols_lab <- names(data)[grep("WBC|Lymphocyte|Monocyte|Platelet|CRP|ALT|AST|GGT|TBIL|DBIL|Creatinine|Glucose", names(data))]
+
+data_plot <- data %>%
+  select(Group_d, all_of(cols_lab)) %>%
+  mutate(across(all_of(cols_lab), ~ as.numeric(gsub("[^0-9.-]", "", as.character(.x))))) %>%
+  pivot_longer(cols = -Group_d, names_to = "Variable", values_to = "Value") %>%
+  mutate(
+    Group_d = factor(
+      Group_d,
+      levels = c(1, 2, 3), 
+      labels = c("non-COVID-19", "non-Severe", "Severe") #Same labels
+    )
+  ) %>%
+  filter(!is.na(Value), !is.na(Group_d))
+
+### Statistical comparisons
+
+mis_comparaciones <- list(
+  c("non-COVID-19", "non-Severe"), 
+  c("non-COVID-19", "Severe")
+)
+
+### Label/Unit correction
+
+config_variables <- list(
+  "WBC_count,_×109/L" = list(title = "White Blood Cell (WBC)", unit = "Count (x10⁹/L)", lim = c(0, 20)),
+  "Lymphocyte_count,_×109/L" = list(title = "Lymphocyte", unit = "Count (x10⁹/L)", lim = c(0, 5)),
+  "Monocyte_count,_×109/L" = list(title = "Monocyte", unit = "Count (x10⁹/L)", lim = c(0, 2)),
+  "Platelet_count,_×109/L" = list(title = "Platelet", unit = "Count (x10⁹/L)", lim = c(0, 500)),
+  "CRP_i,_mg/L" = list(title = "C-reactive protein (CRP)", unit = "mg/L", lim = c(0, 200)),
+  "ALT_j,__U/L" = list(title = "ALT", unit = "U/L", lim = c(0, 150)),
+  "AST_k,_U/L" = list(title = "AST", unit = "U/L", lim = c(0, 150)),
+  "GGT_l,_U/L" = list(title = "GGT", unit = "U/L", lim = c(0, 200)),
+  "TBIL_m,_μmol/L" = list(title = "Total Bilirubin (TBIL)", unit = "μmol/L", lim = c(0, 60)),
+  "DBIL_n,_μmol/L" = list(title = "Direct Bilirubin (DBIL)", unit = "μmol/L", lim = c(0, 260)),
+  "Creatinine,_μmol/L" = list(title = "Creatinine", unit = "μmol/L", lim = c(0, 150)),
+  "Glucose,_mmol/L" = list(title = "Glucose", unit = "mmol/L", lim = c(0, 15))
+)
+
+group_colors <- c("non-COVID-19" = "#3b5cff", "non-Severe" = "#f4a261", "Severe" = "#8b1e1e")
+
+make_plot <- function(var_id) {
+  conf <- config_variables[[var_id]]
+  df_sub <- data_plot %>% dplyr::filter(Variable == var_id)
+
+  # Key position
+  y_pos_stars <- c(conf$lim[2] * 0.82, conf$lim[2] * 0.92)
+
+  ggplot(df_sub, aes(x = Group_d, y = Value, color = Group_d)) +
+
+
+    stat_summary(
+      fun = mean,
+      geom = "bar",
+      width = 0.6,
+      aes(color = Group_d),
+      fill = NA,
+      linewidth = 1
+    ) +
+    stat_summary(
+      fun.data = mean_sdl,
+      fun.args = list(mult = 1),
+      geom = "errorbar",
+      width = 0.25,
+      linewidth = 0.5,
+      aes(color = Group_d)
+    ) +
+
+    geom_jitter(
+      aes(color = Group_d),
+      width = 0.15,
+      size = 0.5,
+      alpha = 0.3
+    ) +
+
+    scale_color_manual(
+  values = group_colors,
+  name = NULL ) +
+
+    ### STATS
+    stat_compare_means(
+      comparisons = mis_comparaciones,
+      label = "p.signif",
+      method = "t.test",
+      method.args = list(var.equal = FALSE),
+      hide.ns = TRUE,
+      label.y = y_pos_stars,
+      size = 3.2,
+      tip.length = 0.02
+    ) +
+
+    coord_cartesian(ylim = conf$lim) +
+    scale_y_continuous(expand = c(0, 0), breaks = scales::pretty_breaks(n = 5)) +
+
+    ### Labels & theme
+    labs(title = conf$title, y = conf$unit, x = "") +
+    theme_classic(base_size = 8) +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 9),
+      axis.title.y = element_text(face = "bold", size = 7),
+      axis.text.x = element_blank(),   
+      axis.ticks.x = element_blank()
+    )
+}
+
+
+### Plot list
+plots <- lapply(names(config_variables), make_plot)
+
+### Collecting the plots
+final_plot <- wrap_plots(plots, ncol = 3) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "right",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 9)
+  )
+
+final_plot
+
+### PLOT EXPORTING: Dimension that ensure correct visualization
+ggsave("data/processed_data//Supplementary_Figure_1.png", plot = final_plot, width = 10, height = 16, dpi = 300)
+
+
 
 ```
 
+### Exercise 2.2
 
-## Exercise 2.2
 Identify and handle outliers using an appropriate and well-justified method (e.g. removal, transformation, or robust statistics).
 
 Reproduce Supplementary Figure 1 after outlier handling and discuss how and why the results change.
-```{r}
 
+```{r, fig.align='center'}
+
+### Limiting maximum Tukey values (Q3 + 1.5*IQR)
+handle_outliers <- function(x) {
+  if(all(is.na(x))) return(x)
+  qnt <- quantile(x, probs = c(0.25, 0.75), na.rm = TRUE)
+  iqr <- qnt[2] - qnt[1]
+  limite_superior <- qnt[2] + 1.5 * iqr
+  x[x > limite_superior] <- limite_superior  # Limitiing greater values
+  return(x)
+}
+
+### Apply the function to each variable
+data_plot_clean <- data_plot %>%
+  group_by(Variable) %>%
+  mutate(Value = handle_outliers(Value)) %>%
+  ungroup()
+
+make_plot_clean <- function(var_id) {
+  conf <- config_variables[[var_id]]
+  df_sub <- data_plot_clean %>% filter(Variable == var_id)
+  
+  ### Positions for significant keys
+  y_max <- max(df_sub$Value, na.rm = TRUE)
+  y_pos_stars <- c(y_max * 0.82, y_max * 0.92)
+
+  ggplot(df_sub, aes(x = Group_d, y = Value)) +
+    
+    ### Bars
+    stat_summary(
+      fun = mean,
+      geom = "bar",
+      width = 0.6,
+      aes(color = Group_d),
+      fill = NA,
+      linewidth = 1
+    ) +
+    
+    ### Error bars
+    stat_summary(
+      fun.data = mean_sdl,
+      fun.args = list(mult = 1),
+      geom = "errorbar",
+      width = 0.25,
+      linewidth = 0.5,
+      aes(color = Group_d)
+    ) +
+    
+    ### Winsorizades dots
+    geom_jitter(
+      aes(color = Group_d),
+      width = 0.15,
+      size = 0.5,
+      alpha = 0.4
+    ) +
+
+    scale_color_manual(values = group_colors, name = NULL) +
+
+    ### Welch t-test
+    stat_compare_means(
+      comparisons = mis_comparaciones,
+      label = "p.signif",
+      method = "t.test",
+      method.args = list(var.equal = FALSE),
+      hide.ns = TRUE,
+      label.y = y_pos_stars,
+      size = 3.2,
+      tip.length = 0.02
+    ) +
+
+    coord_cartesian(ylim = conf$lim) +
+    scale_y_continuous(expand = c(0,0), breaks = scales::pretty_breaks(n = 5)) +
+
+    labs(title = conf$title, y = conf$unit, x = "") +
+    theme_classic(base_size = 8) +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 9),
+      axis.title.y = element_text(face = "bold", size = 7),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank()
+    )
+}
+
+plots_clean <- lapply(names(config_variables), make_plot_clean)
+
+figura_2_clean <- wrap_plots(plots_clean, ncol = 3) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "right",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 9)
+  )
+
+figura_2_clean
+
+
+### PLOT EXPORTING: Dimension that ensure correct visualization
+ggsave("data/processed_data//Supplementary_Figure_1_Winsorized.png",
+       plot = figura_2_clean,
+       width = 10, height = 16, dpi = 300)
 ```
 
 # Exercise 3
+
 Create a heatmap of the biomarker data. Include group and gender as annotation variables.
 
-```{r}
+```{r, fig.align='center'}
+
+data_heatmap <- data %>%
+  select(all_of(cols_lab), Group_d, Sex_g) %>%
+  arrange(Group_d) # Arranging by group
+
+### Marker matrix
+biomarkers <- data_heatmap %>%
+  select(all_of(cols_lab)) %>%
+  mutate(across(everything(), ~ as.numeric(gsub("[^0-9.-]", "", as.character(.))))) %>%
+  as.matrix()
+
+
+### NA imputing using average 
+
+for(i in 1:ncol(biomarkers)){
+  col_mean <- mean(biomarkers[, i], na.rm = TRUE)
+  biomarkers[is.na(biomarkers[, i]), i] <- col_mean
+}
+
+### Col name adaptation for the plot
+colnames(biomarkers) <- colnames(biomarkers) %>%
+  str_replace_all("_", " ") %>%
+  str_split(",") %>%
+  sapply("[", 1)
+
+### Labels
+annotation <- data_heatmap %>%
+  transmute(
+    Group = factor(Group_d, levels = c(0, 1, 2, 3),
+                   labels = c("Healthy", "non-COVID-19", "non-Severe", "Severe")),
+    Gender = factor(Sex_g, levels = c(1, 0),
+                    labels = c("Male", "Female"))
+  ) %>%
+  as.data.frame()
+
+row.names(biomarkers) <- paste0("S_", 1:nrow(biomarkers))
+row.names(annotation) <- row.names(biomarkers)
+
+### Color palette
+annotation_colors <- list(
+  Group = c("Healthy" = "lightpink",
+            "non-COVID-19" = "#3b5cff",
+            "non-Severe"   = "#f4a261",
+            "Severe"       = "#8b1e1e"),
+  Gender = c("Male" = "#F2B127", "Female" = "#E0FABB")
+)
+
+### Heatmap color palette
+heatmap_palette <- colorRampPalette(c("navy", "white", "firebrick3"))(100)
+
+### HEATMAP
+
+heatmap <- pheatmap(
+  t(biomarkers),               ### transpose to obtain markers as rows
+  scale = "row",               ### biomarker normalization (Z-score)
+  clustering_distance_rows = "euclidean",
+  clustering_method = "complete",
+  cluster_rows = TRUE,         
+  cluster_cols = FALSE,        
+  annotation_col = annotation,
+  annotation_colors = annotation_colors,
+  color = heatmap_palette,
+  border_color = NA,
+  show_rownames = TRUE,
+  show_colnames = FALSE,       
+  fontsize = 12,
+  main = "Heatmap of Clinical Biomarkers by Group"
+)
+
+ggsave("data/processed_data//HeatMap.png", plot = heatmap, width = 15, height = 12, dpi = 300, bg = "white")
+
+
 
 ```
 
 # Conclusion
 
 Write a concise conclusion (1 paragraphs) summarizing the main differences observed across the three patient groups based on the twelve clinical parameters. Support your statements with evidence from your analyses.
+
+<b>About the conclusion: </b>
+
+The analysis of the twelve clinical biomarkers reveals a clear inflammatory and organ-stress profile that distinguishes the patient groups as disease severity increases. The Severe group exhibits the most pronounced physiological disruptions, characterized by significant elevations in C-reactive protein (CRP), creatinine, and liver enzymes such as ALT and AST, alongside a marked reduction in lymphocyte counts. The non-Severe group occupies an intermediate biochemical state, showing milder inflammatory markers than the severe cases but remaining distinct from the non-COVID-19 controls. Notably, age serves as a primary demographic differentiator, with the Severe group being predominantly composed of older individuals (60–80 years), whereas the non-Severe group shows a higher density of younger patients (20–50 years). While BMI remained relatively stable across groups, the cumulative evidence from the biomarker heatmap and statistical comparisons confirms that COVID-19 severity is driven by a systemic inflammatory response and multi-organ involvement, with age acting as a significant aggravating factor. Interestingly, in this specific cohort, a higher proportion of females was observed in the Severe group compared to the Healthy controls.
 
 # session info {.unnumbered}
 
